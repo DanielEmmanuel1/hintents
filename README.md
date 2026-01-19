@@ -47,8 +47,8 @@ We are building this open-source to help the entire Stellar community.
 ### Getting Started
 1.  Clone the repo:
     ```bash
-    git clone https://github.com/dotandev/hintent.git
-    cd simulator
+    git clone https://github.com/dotandev/hintents.git
+    cd hintents
     ```
 2.  Run tests:
     ```bash

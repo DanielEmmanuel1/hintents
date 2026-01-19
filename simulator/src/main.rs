@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
+use soroban_env_host::xdr::ReadXdr; // Import ReadXdr trait for from_xdr
+use base64::{Engine as _};
 
 #[derive(Debug, Deserialize)]
 struct SimulationRequest {
@@ -38,18 +40,53 @@ fn main() {
         }
     };
 
-    eprintln!("Received Request with Envelope Length: {}", request.envelope_xdr.len());
+    // Decode XDR
+    let envelope = match base64::engine::general_purpose::STANDARD.decode(&request.envelope_xdr) {
+        Ok(bytes) => match soroban_env_host::xdr::TransactionEnvelope::from_xdr(bytes, soroban_env_host::xdr::Limits::none()) {
+            Ok(env) => env,
+            Err(e) => {
+                return send_error(format!("Failed to parse Envelope XDR: {}", e));
+            }
+        },
+        Err(e) => {
+            return send_error(format!("Failed to decode Envelope Base64: {}", e));
+        }
+    };
 
-    // TODO: Invoke Soroban Host logic here
+    let _result_meta = match base64::engine::general_purpose::STANDARD.decode(&request.result_meta_xdr) {
+        Ok(bytes) => match soroban_env_host::xdr::TransactionResultMeta::from_xdr(bytes, soroban_env_host::xdr::Limits::none()) {
+            Ok(meta) => meta,
+            Err(e) => {
+                return send_error(format!("Failed to parse ResultMeta XDR: {}", e));
+            }
+        },
+        Err(e) => {
+            return send_error(format!("Failed to decode ResultMeta Base64: {}", e));
+        }
+    };
+
+    eprintln!("Successfully parsed Envelope and ResultMeta!");
+
+    // TODO: Initialize Host and Populate Storage using 'result_meta'
 
     // Mock Success Response
     let response = SimulationResponse {
         status: "success".to_string(),
         error: None,
-        events: vec!["MockEvent: Contract Invoked".to_string()],
+        events: vec![format!("Parsed Envelope: {:?}", envelope)],
         logs: vec!["Host Initialized".to_string()],
     };
 
     println!("{}", serde_json::to_string(&response).unwrap());
+}
+
+fn send_error(msg: String) {
+    let res = SimulationResponse {
+        status: "error".to_string(),
+        error: Some(msg),
+        events: vec![],
+        logs: vec![],
+    };
+    println!("{}", serde_json::to_string(&res).unwrap());
 }
 
