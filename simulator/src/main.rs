@@ -182,7 +182,7 @@ fn main() {
     let response = SimulationResponse {
         status: "success".to_string(),
         error: None,
-        events: events,
+        events,
         logs: {
             let mut logs = vec![
                 format!("Host Initialized with Budget: {:?}", host.budget_cloned()),
