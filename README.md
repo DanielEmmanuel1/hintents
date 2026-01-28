@@ -53,6 +53,15 @@ For a detailed explanation of the architecture, see [docs/architecture.md](docs/
 
 We are building this open-source to help the entire Stellar community.
 
+### 🗳️ Vote on Features
+
+Help shape the future of Erst! Vote on feature requests using GitHub Discussions:
+-   Browse and vote on [Feature Requests](https://github.com/dotandev/hintents/discussions)
+-   Add a 👍 reaction to features you'd like to see prioritized
+-   Submit your own ideas for community feedback
+
+See our [CONTRIBUTING.md](CONTRIBUTING.md#feature-requests--voting) for the full feature request process.
+
 ### Prerequisites
 
 - Go 1.21+
