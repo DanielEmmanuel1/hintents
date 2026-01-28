@@ -1,4 +1,4 @@
-.PHONY: build test lint lint-unused test-unused validate-ci clean
+.PHONY: build test lint lint-unused test-unused validate-ci validate-interface clean
 
 # Build the main binary
 build:
@@ -23,6 +23,10 @@ test-unused:
 # Validate CI/CD configuration
 validate-ci:
 	./scripts/validate-ci.sh
+
+# Validate interface implementation
+validate-interface:
+	./scripts/validate-interface.sh
 
 # Clean build artifacts
 clean:
