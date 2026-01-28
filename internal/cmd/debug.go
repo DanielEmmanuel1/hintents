@@ -1,3 +1,6 @@
+// Copyright 2025 Erst Users
+// SPDX-License-Identifier: Apache-2.0
+
 package cmd
 
 import (
@@ -5,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dotandev/hintents/internal/db"
+	"github.com/dotandev/hintents/internal/errors"
 	"github.com/dotandev/hintents/internal/rpc"
 	"github.com/dotandev/hintents/internal/session"
 	"github.com/dotandev/hintents/internal/simulator"
@@ -27,12 +32,11 @@ Example:
   erst debug --network testnet <tx-hash>`,
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		// Validate network flag
 		switch rpc.Network(networkFlag) {
 		case rpc.Testnet, rpc.Mainnet, rpc.Futurenet:
 			return nil
 		default:
-			return fmt.Errorf("invalid network: %s. Must be one of: testnet, mainnet, futurenet", networkFlag)
+			return errors.WrapInvalidNetwork(networkFlag)
 		}
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
