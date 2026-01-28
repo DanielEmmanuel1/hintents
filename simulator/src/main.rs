@@ -255,6 +255,32 @@ fn send_error(msg: String) {
         error: Some(msg),
         events: vec![],
         logs: vec![],
+        flamegraph: None,
     };
     println!("{}", serde_json::to_string(&res).unwrap());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulation_request_deserialization() {
+        let json = r#"{"envelope_xdr": "AAAA", "result_meta_xdr": "BBBB", "profile": true}"#;
+        let req: SimulationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.profile, Some(true));
+    }
+
+    #[test]
+    fn test_simulation_response_serialization() {
+        let res = SimulationResponse {
+            status: "success".to_string(),
+            error: None,
+            events: vec![],
+            logs: vec![],
+            flamegraph: Some("<svg></svg>".to_string()),
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        assert!(json.contains("\"flamegraph\":\"<svg></svg>\""));
+    }
 }
