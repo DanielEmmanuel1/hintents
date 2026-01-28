@@ -14,17 +14,17 @@ import (
 	"github.com/dotandev/hintents/internal/logger"
 )
 
-// Runner handles the execution of the Rust simulator binary
-type Runner struct {
+// ConcreteRunner handles the execution of the Rust simulator binary
+type ConcreteRunner struct {
 	BinaryPath string
 }
 
 // NewRunner creates a new simulator runner.
 // It checks for the binary in common locations.
-func NewRunner() (*Runner, error) {
+func NewRunner() (*ConcreteRunner, error) {
 	// 1. Check environment variable
 	if envPath := os.Getenv("ERST_SIMULATOR_PATH"); envPath != "" {
-		return &Runner{BinaryPath: envPath}, nil
+		return &ConcreteRunner{BinaryPath: envPath}, nil
 	}
 
 	// 2. Check current directory (for Docker/Production)
@@ -32,26 +32,26 @@ func NewRunner() (*Runner, error) {
 	if err == nil {
 		localPath := filepath.Join(cwd, "erst-sim")
 		if _, err := os.Stat(localPath); err == nil {
-			return &Runner{BinaryPath: localPath}, nil
+			return &ConcreteRunner{BinaryPath: localPath}, nil
 		}
 	}
 
 	// 3. Check development path (assuming running from sdk root)
 	devPath := filepath.Join("simulator", "target", "release", "erst-sim")
 	if _, err := os.Stat(devPath); err == nil {
-		return &Runner{BinaryPath: devPath}, nil
+		return &ConcreteRunner{BinaryPath: devPath}, nil
 	}
 
 	// 4. Check global PATH
 	if path, err := exec.LookPath("erst-sim"); err == nil {
-		return &Runner{BinaryPath: path}, nil
+		return &ConcreteRunner{BinaryPath: path}, nil
 	}
 
 	return nil, fmt.Errorf("simulator binary 'erst-sim' not found. Please build it or set ERST_SIMULATOR_PATH")
 }
 
 // Run executes the simulation with the given request
-func (r *Runner) Run(req *SimulationRequest) (*SimulationResponse, error) {
+func (r *ConcreteRunner) Run(req *SimulationRequest) (*SimulationResponse, error) {
 	logger.Logger.Debug("Starting simulation", "binary", r.BinaryPath)
 
 	// Serialize Request
