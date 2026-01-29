@@ -7,3 +7,5 @@ simulator/target/
 .cursorrules
 
 ishus.py
+
+node_modules
