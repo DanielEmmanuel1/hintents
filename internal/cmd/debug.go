@@ -1,5 +1,16 @@
-// Copyright 2025 Erst Users
-// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 dotandev
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package cmd
 
@@ -7,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -33,6 +45,7 @@ var (
 	"github.com/dotandev/hintents/internal/snapshot"
 	"github.com/dotandev/hintents/internal/telemetry"
 	"github.com/dotandev/hintents/internal/tokenflow"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go/xdr"
 	"go.opentelemetry.io/otel/attribute"
@@ -47,6 +60,9 @@ var (
 	traceOutputFile    string
 	snapshotFlag       string
 	compareNetworkFlag string
+	verbose            bool
+	wasmPath           string
+	args               []string
 )
 
 // DebugCommand holds dependencies for the debug command
@@ -136,7 +152,10 @@ through the local simulator, and displays detailed execution traces including:
   - Token flows (XLM and Soroban assets)
   - Execution metadata and state changes
 
-The simulation results are stored in a session that can be saved for later analysis.`,
+The simulation results are stored in a session that can be saved for later analysis.
+
+Local WASM Replay Mode:
+  Use --wasm flag to test contracts locally without network data.`,
 	Example: `  # Debug a transaction on mainnet
   erst debug 5c0a1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab
 
@@ -144,9 +163,21 @@ The simulation results are stored in a session that can be saved for later analy
   erst debug --network testnet abc123...def789
 
   # Debug and compare results between networks
-  erst debug --network mainnet --compare-network testnet abc123...def789`,
-	Args: cobra.ExactArgs(1),
+  erst debug --network mainnet --compare-network testnet abc123...def789
+
+  # Local WASM replay (no network required)
+  erst debug --wasm ./contract.wasm --args "arg1" --args "arg2"`,
+	Args: cobra.MaximumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
+		// Local WASM replay mode doesn't need transaction hash
+		if wasmPath != "" {
+			return nil
+		}
+
+		if len(args) == 0 {
+			return fmt.Errorf("transaction hash is required when not using --wasm flag")
+		}
+
 		if len(args[0]) != 64 {
 			return fmt.Errorf("error: invalid transaction hash format (expected 64 hex characters, got %d)", len(args[0]))
 		}
@@ -170,9 +201,15 @@ The simulation results are stored in a session that can be saved for later analy
 		}
 		return nil
 	},
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, cmdArgs []string) error {
+		// Local WASM replay mode
+		if wasmPath != "" {
+			return runLocalWasmReplay()
+		}
+
+		// Network transaction replay mode
 		ctx := cmd.Context()
-		txHash := args[0]
+		txHash := cmdArgs[0]
 
 		// Initialize OpenTelemetry if enabled
 		if tracingEnabled {
@@ -212,13 +249,15 @@ The simulation results are stored in a session that can be saved for later analy
 			}
 		}
 
-		fmt.Printf("Fetching transaction: %s\n", txHash)
+		fmt.Printf("Fetching transaction: %s
+", txHash)
 		resp, err := client.GetTransaction(ctx, txHash)
 		if err != nil {
 			return fmt.Errorf(localization.Get("error.fetch_transaction"), err)
 		}
 
-		fmt.Printf("Transaction fetched successfully. Envelope size: %d bytes\n", len(resp.EnvelopeXdr))
+		fmt.Printf("Transaction fetched successfully. Envelope size: %d bytes
+", len(resp.EnvelopeXdr))
 
 		// Extract ledger keys for replay
 		keys, err := extractLedgerKeys(resp.ResultMetaXdr)
@@ -231,50 +270,46 @@ The simulation results are stored in a session that can be saved for later analy
 			return fmt.Errorf("failed to initialize simulator: %w", err)
 		}
 
-		var simResp *simulator.SimulationResponse
-		var ledgerEntries map[string]string
+		// Determine timestamps to simulate
+		timestamps := []int64{TimestampFlag}
+		if WindowFlag > 0 && TimestampFlag > 0 {
+			// Simulate 5 steps across the window
+			step := WindowFlag / 4
+			for i := 1; i <= 4; i++ {
+				timestamps = append(timestamps, TimestampFlag+int64(i)*step)
+			}
+		}
 
-		if compareNetworkFlag == "" {
-			// Single Network Run
-			if snapshotFlag != "" {
-				snap, err := snapshot.Load(snapshotFlag)
-				if err != nil {
-					return fmt.Errorf("failed to load snapshot: %w", err)
-				}
-				ledgerEntries = snap.ToMap()
-			} else {
-				ledgerEntries, err = client.GetLedgerEntries(ctx, keys)
-				if err != nil {
-					return fmt.Errorf("failed to fetch ledger entries: %w", err)
-				}
+		var lastSimResp *simulator.SimulationResponse
+
+		for _, ts := range timestamps {
+			if len(timestamps) > 1 {
+				fmt.Printf("
+--- Simulating at Timestamp: %d ---
+", ts)
 			}
 
-			fmt.Printf("Running simulation on %s...\n", networkFlag)
-			simReq := &simulator.SimulationRequest{
-				EnvelopeXdr:   resp.EnvelopeXdr,
-				ResultMetaXdr: resp.ResultMetaXdr,
-				LedgerEntries: ledgerEntries,
-			}
-			simResp, err = runner.Run(simReq)
-			if err != nil {
-				return fmt.Errorf("simulation failed: %w", err)
-			}
-			printSimulationResult(networkFlag, simResp)
-		} else {
-			// Comparison Run
-			var wg sync.WaitGroup
-			var primaryResult, compareResult *simulator.SimulationResponse
-			var primaryErr, compareErr error
+			var simResp *simulator.SimulationResponse
+			var ledgerEntries map[string]string
 
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				entries, err := client.GetLedgerEntries(ctx, keys)
-				if err != nil {
-					primaryErr = err
-					return
+			if compareNetworkFlag == "" {
+				// Single Network Run
+				if snapshotFlag != "" {
+					snap, err := snapshot.Load(snapshotFlag)
+					if err != nil {
+						return fmt.Errorf("failed to load snapshot: %w", err)
+					}
+					ledgerEntries = snap.ToMap()
+				} else {
+					ledgerEntries, err = client.GetLedgerEntries(ctx, keys)
+					if err != nil {
+						return fmt.Errorf("failed to fetch ledger entries: %w", err)
+					}
 				}
-				primaryResult, primaryErr = runner.Run(&simulator.SimulationRequest{
+
+				fmt.Printf("Running simulation on %s...
+", networkFlag)
+				simReq := &simulator.SimulationRequest{
 					EnvelopeXdr:   resp.EnvelopeXdr,
 					ResultMetaXdr: resp.ResultMetaXdr,
 					LedgerEntries: entries,
@@ -290,50 +325,104 @@ The simulation results are stored in a session that can be saved for later analy
 				compareEntries, err := compareClient.GetLedgerEntries(cmd.Context(), keys)
 				compareClient := rpc.NewClient(rpc.Network(compareNetworkFlag))
 				entries, err := compareClient.GetLedgerEntries(ctx, keys)
-				if err != nil {
-					compareErr = err
-					return
+					LedgerEntries: ledgerEntries,
+					Timestamp:     ts,
 				}
-				compareResult, compareErr = runner.Run(&simulator.SimulationRequest{
-					EnvelopeXdr:   resp.EnvelopeXdr,
-					ResultMetaXdr: resp.ResultMetaXdr,
-					LedgerEntries: entries,
-				})
-			}()
+				simResp, err = runner.Run(simReq)
+				if err != nil {
+					if len(timestamps) > 1 {
+						fmt.Printf("Simulation failed at timestamp %d: %v
+", ts, err)
+						continue
+					}
+					return fmt.Errorf("simulation failed: %w", err)
+				}
+				printSimulationResult(networkFlag, simResp)
+			} else {
+				// Comparison Run
+				var wg sync.WaitGroup
+				var primaryResult, compareResult *simulator.SimulationResponse
+				var primaryErr, compareErr error
 
-			wg.Wait()
-			if primaryErr != nil {
-				return fmt.Errorf("primary network error: %w", primaryErr)
-			}
-			if compareErr != nil {
-				return fmt.Errorf("compare network error: %w", compareErr)
-			}
+				wg.Add(2)
+				go func() {
+					defer wg.Done()
+					entries, err := client.GetLedgerEntries(ctx, keys)
+					if err != nil {
+						primaryErr = err
+						return
+					}
+					primaryResult, primaryErr = runner.Run(&simulator.SimulationRequest{
+						EnvelopeXdr:   resp.EnvelopeXdr,
+						ResultMetaXdr: resp.ResultMetaXdr,
+						LedgerEntries: entries,
+						Timestamp:     ts,
+					})
+				}()
 
-			simResp = primaryResult // Use primary for further analysis
-			printSimulationResult(networkFlag, primaryResult)
-			printSimulationResult(compareNetworkFlag, compareResult)
-			diffResults(primaryResult, compareResult, networkFlag, compareNetworkFlag)
+				go func() {
+					defer wg.Done()
+					compareClient := rpc.NewClient(rpc.Network(compareNetworkFlag))
+					entries, err := compareClient.GetLedgerEntries(ctx, keys)
+					if err != nil {
+						compareErr = err
+						return
+					}
+					compareResult, compareErr = runner.Run(&simulator.SimulationRequest{
+						EnvelopeXdr:   resp.EnvelopeXdr,
+						ResultMetaXdr: resp.ResultMetaXdr,
+						LedgerEntries: entries,
+						Timestamp:     ts,
+					})
+				}()
+
+				wg.Wait()
+				if primaryErr != nil {
+					return fmt.Errorf("primary network error: %w", primaryErr)
+				}
+				if compareErr != nil {
+					return fmt.Errorf("compare network error: %w", compareErr)
+				}
+
+				simResp = primaryResult // Use primary for further analysis
+				printSimulationResult(networkFlag, primaryResult)
+				printSimulationResult(compareNetworkFlag, compareResult)
+				diffResults(primaryResult, compareResult, networkFlag, compareNetworkFlag)
+			}
+			lastSimResp = simResp
+		}
+
+		if lastSimResp == nil {
+			return fmt.Errorf("no simulation results generated")
 		}
 
 		// Analysis: Security
-		fmt.Printf("\n=== Security Analysis ===\n")
+		fmt.Printf("
+=== Security Analysis ===
+")
 		secDetector := security.NewDetector()
-		findings := secDetector.Analyze(resp.EnvelopeXdr, resp.ResultMetaXdr, simResp.Events, simResp.Logs)
+		findings := secDetector.Analyze(resp.EnvelopeXdr, resp.ResultMetaXdr, lastSimResp.Events, lastSimResp.Logs)
 		if len(findings) == 0 {
 			fmt.Println("✓ No security issues detected")
 		} else {
 			for i, f := range findings {
-				fmt.Printf("%d. [%s] %s: %s\n", i+1, f.Severity, f.Title, f.Description)
+				fmt.Printf("%d. [%s] %s: %s
+", i+1, f.Severity, f.Title, f.Description)
 			}
 		}
 
 		// Analysis: Token Flows
 		if report, err := tokenflow.BuildReport(resp.EnvelopeXdr, resp.ResultMetaXdr); err == nil && len(report.Agg) > 0 {
-			fmt.Printf("\nToken Flow Summary:\n")
+			fmt.Printf("
+Token Flow Summary:
+")
 			for _, line := range report.SummaryLines() {
-				fmt.Printf("  %s\n", line)
+				fmt.Printf("  %s
+", line)
 			}
-			fmt.Printf("\nToken Flow Chart (Mermaid):\n")
+			fmt.Printf("
+Token Flow Chart (Mermaid):
+")
 			fmt.Println(report.MermaidFlowchart())
 		}
 
@@ -348,10 +437,82 @@ The simulation results are stored in a session that can be saved for later analy
 			ResultMetaXdr: resp.ResultMetaXdr,
 		}
 		SetCurrentSession(sessionData)
-		fmt.Printf("\nSession ready. Use 'erst session save' to persist.\n")
-
+		fmt.Printf("
+Session ready. Use 'erst session save' to persist.
+")
 		return nil
 	},
+}
+
+func runLocalWasmReplay() error {
+	color.Yellow("⚠️  WARNING: Using Mock State (not mainnet data)")
+	fmt.Println()
+
+	// Verify WASM file exists
+	if _, err := os.Stat(wasmPath); os.IsNotExist(err) {
+		return fmt.Errorf("WASM file not found: %s", wasmPath)
+	}
+
+	color.Cyan("🔧 Local WASM Replay Mode")
+	fmt.Printf("WASM File: %s
+", wasmPath)
+	fmt.Printf("Arguments: %v
+", args)
+	fmt.Println()
+
+	// Create simulator runner
+	runner, err := simulator.NewRunner()
+	if err != nil {
+		return fmt.Errorf("failed to initialize simulator: %w", err)
+	}
+
+	// Create simulation request with local WASM
+	req := &simulator.SimulationRequest{
+		EnvelopeXdr:   "",  // Empty for local replay
+		ResultMetaXdr: "",  // Empty for local replay
+		LedgerEntries: nil, // Mock state will be generated
+		WasmPath:      &wasmPath,
+		MockArgs:      &args,
+	}
+
+	// Run simulation
+	color.Green("▶ Executing contract locally...")
+	resp, err := runner.Run(req)
+	if err != nil {
+		color.Red("✗ Execution failed: %v", err)
+		return err
+	}
+
+	// Display results
+	fmt.Println()
+	color.Green("✓ Execution completed successfully")
+	fmt.Println()
+
+	if len(resp.Logs) > 0 {
+		color.Cyan("📋 Logs:")
+		for _, log := range resp.Logs {
+			fmt.Printf("  %s
+", log)
+		}
+		fmt.Println()
+	}
+
+	if len(resp.Events) > 0 {
+		color.Cyan("📡 Events:")
+		for _, event := range resp.Events {
+			fmt.Printf("  %s
+", event)
+		}
+		fmt.Println()
+	}
+
+	if verbose {
+		color.Cyan("🔍 Full Response:")
+		jsonBytes, _ := json.MarshalIndent(resp, "", "  ")
+		fmt.Println(string(jsonBytes))
+	}
+
+	return nil
 }
 
 func extractLedgerKeys(metaXdr string) ([]string, error) {
@@ -441,20 +602,28 @@ func extractLedgerKeys(metaXdr string) ([]string, error) {
 }
 
 func printSimulationResult(network string, res *simulator.SimulationResponse) {
-	fmt.Printf("\n--- Result for %s ---\n", network)
-	fmt.Printf("Status: %s\n", res.Status)
+	fmt.Printf("
+--- Result for %s ---
+", network)
+	fmt.Printf("Status: %s
+", res.Status)
 	if res.Error != "" {
-		fmt.Printf("Error: %s\n", res.Error)
+		fmt.Printf("Error: %s
+", res.Error)
 	}
-	fmt.Printf("Events: %d, Logs: %d\n", len(res.Events), len(res.Logs))
+	fmt.Printf("Events: %d, Logs: %d
+", len(res.Events), len(res.Logs))
 }
 
 func diffResults(res1, res2 *simulator.SimulationResponse, net1, net2 string) {
 	if res1.Status != res2.Status {
-		fmt.Printf("\n[DIFF] Status mismatch: %s vs %s\n", res1.Status, res2.Status)
+		fmt.Printf("
+[DIFF] Status mismatch: %s vs %s
+", res1.Status, res2.Status)
 	}
 	if len(res1.Events) != len(res2.Events) {
-		fmt.Printf("[DIFF] Events count mismatch: %d vs %d\n", len(res1.Events), len(res2.Events))
+		fmt.Printf("[DIFF] Events count mismatch: %d vs %d
+", len(res1.Events), len(res2.Events))
 	}
 }
 
@@ -467,6 +636,9 @@ func init() {
 	debugCmd.Flags().StringVar(&traceOutputFile, "trace-output", "", "Trace output file")
 	debugCmd.Flags().StringVar(&snapshotFlag, "snapshot", "", "Snapshot file")
 	debugCmd.Flags().StringVar(&compareNetworkFlag, "compare-network", "", "Network to compare")
+	debugCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	debugCmd.Flags().StringVar(&wasmPath, "wasm", "", "Path to local WASM file for local replay (no network required)")
+	debugCmd.Flags().StringSliceVar(&args, "args", []string{}, "Mock arguments for local replay (JSON array of strings)")
 
 	rootCmd.AddCommand(debugCmd)
 }

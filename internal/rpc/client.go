@@ -1,5 +1,16 @@
-// Copyright 2025 Erst Users
-// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 dotandev
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package rpc
 
@@ -11,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/dotandev/hintents/internal/logger"
 	"github.com/dotandev/hintents/internal/telemetry"
@@ -55,6 +67,37 @@ func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	return t.transport.RoundTrip(req)
 }
+// NetworkConfig represents a Stellar network configuration
+type NetworkConfig struct {
+	Name              string
+	HorizonURL        string
+	NetworkPassphrase string
+	SorobanRPCURL     string
+}
+
+// Predefined network configurations
+var (
+	TestnetConfig = NetworkConfig{
+		Name:              "testnet",
+		HorizonURL:        TestnetHorizonURL,
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		SorobanRPCURL:     TestnetSorobanURL,
+	}
+
+	MainnetConfig = NetworkConfig{
+		Name:              "mainnet",
+		HorizonURL:        MainnetHorizonURL,
+		NetworkPassphrase: "Public Global Stellar Network ; September 2015",
+		SorobanRPCURL:     MainnetSorobanURL,
+	}
+
+	FuturenetConfig = NetworkConfig{
+		Name:              "futurenet",
+		HorizonURL:        FuturenetHorizonURL,
+		NetworkPassphrase: "Test SDF Future Network ; October 2022",
+		SorobanRPCURL:     FuturenetSorobanURL,
+	}
+)
 
 // Client handles interactions with the Stellar Network
 type Client struct {
@@ -62,6 +105,14 @@ type Client struct {
 	Network    Network
 	SorobanURL string
 	token      string // stored for reference, not logged
+	Config     NetworkConfig
+}
+
+// TransactionResponse contains the raw XDR fields needed for simulation
+type TransactionResponse struct {
+	EnvelopeXdr   string
+	ResultXdr     string
+	ResultMetaXdr string
 }
 
 // NewClient creates a new RPC client with the specified network
@@ -80,6 +131,7 @@ func NewClient(net Network, token string) *Client {
 	var horizonClient *horizonclient.Client
 	var sorobanURL string
 	httpClient := createHTTPClient(token)
+	var config NetworkConfig
 
 	switch net {
 	case Testnet:
@@ -88,12 +140,14 @@ func NewClient(net Network, token string) *Client {
 			HTTP:       httpClient,
 		}
 		sorobanURL = TestnetSorobanURL
+		config = TestnetConfig
 	case Futurenet:
 		horizonClient = &horizonclient.Client{
 			HorizonURL: FuturenetHorizonURL,
 			HTTP:       httpClient,
 		}
 		sorobanURL = FuturenetSorobanURL
+		config = FuturenetConfig
 	case Mainnet:
 		fallthrough
 	default:
@@ -102,6 +156,7 @@ func NewClient(net Network, token string) *Client {
 			HTTP:       httpClient,
 		}
 		sorobanURL = MainnetSorobanURL
+		config = MainnetConfig
 	}
 
 	if token != "" {
@@ -115,6 +170,7 @@ func NewClient(net Network, token string) *Client {
 		Network:    net,
 		SorobanURL: sorobanURL,
 		token:      token,
+		Config:     config,
 	}
 }
 
@@ -160,14 +216,35 @@ func createHTTPClient(token string) *http.Client {
 			token:     token,
 			transport: http.DefaultTransport,
 		},
+		Config:     defaultClient.Config,
 	}
 }
 
-// TransactionResponse contains the raw XDR fields needed for simulation
-type TransactionResponse struct {
-	EnvelopeXdr   string
-	ResultXdr     string
-	ResultMetaXdr string
+// NewCustomClient creates a new RPC client for a custom/private network
+func NewCustomClient(config NetworkConfig) (*Client, error) {
+	if config.HorizonURL == "" {
+		return nil, fmt.Errorf("horizon URL is required for custom network")
+	}
+	if config.NetworkPassphrase == "" {
+		return nil, fmt.Errorf("network passphrase is required for custom network")
+	}
+
+	horizonClient := &horizonclient.Client{
+		HorizonURL: config.HorizonURL,
+		HTTP:       http.DefaultClient,
+	}
+
+	sorobanURL := config.SorobanRPCURL
+	if sorobanURL == "" {
+		sorobanURL = config.HorizonURL // Fallback to Horizon URL if no Soroban RPC specified
+	}
+
+	return &Client{
+		Horizon:    horizonClient,
+		Network:    "custom",
+		SorobanURL: sorobanURL,
+		Config:     config,
+	}, nil
 }
 
 // GetTransaction fetches the transaction details and full XDR data
@@ -204,6 +281,19 @@ func (c *Client) GetTransaction(ctx context.Context, hash string) (*TransactionR
 	}, nil
 }
 
+// GetNetworkPassphrase returns the network passphrase for this client
+func (c *Client) GetNetworkPassphrase() string {
+	return c.Config.NetworkPassphrase
+}
+
+// GetNetworkName returns the network name for this client
+func (c *Client) GetNetworkName() string {
+	if c.Config.Name != "" {
+		return c.Config.Name
+	}
+	return "custom"
+}
+
 type GetLedgerEntriesRequest struct {
 	Jsonrpc string        `json:"jsonrpc"`
 	ID      int           `json:"id"`
@@ -227,6 +317,153 @@ type GetLedgerEntriesResponse struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+// GetLedgerHeader fetches ledger header details for a specific sequence.
+// This includes essential metadata like sequence number, timestamp, protocol version,
+// and XDR-encoded header data needed for transaction simulation.
+//
+// Parameters:
+//   - ctx: Context for timeout and cancellation
+//   - sequence: The ledger sequence number to fetch
+//
+// Returns:
+//   - *LedgerHeaderResponse: Header data if successful
+//   - error: Typed error indicating failure reason:
+//     * LedgerNotFoundError: Ledger doesn't exist (future or invalid)
+//     * LedgerArchivedError: Ledger has been archived
+//     * RateLimitError: Too many requests
+//
+// Example:
+//
+//	header, err := client.GetLedgerHeader(ctx, 12345678)
+//	if IsLedgerNotFound(err) {
+//	    log.Printf("Ledger not found: %v", err)
+//	}
+func (c *Client) GetLedgerHeader(ctx context.Context, sequence uint32) (*LedgerHeaderResponse, error) {
+	tracer := telemetry.GetTracer()
+	_, span := tracer.Start(ctx, "rpc_get_ledger_header")
+	span.SetAttributes(
+		attribute.String("network", string(c.Network)),
+		attribute.Int("ledger.sequence", int(sequence)),
+	)
+	defer span.End()
+
+	// Set a timeout if context doesn't have one
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
+	logger.Logger.Debug("Fetching ledger header", "sequence", sequence, "network", c.Network)
+
+	// Fetch ledger from Horizon
+	ledger, err := c.Horizon.LedgerDetail(sequence)
+	if err != nil {
+		span.RecordError(err)
+		return nil, c.handleLedgerError(err, sequence)
+	}
+
+	response := FromHorizonLedger(ledger)
+
+	span.SetAttributes(
+		attribute.String("ledger.hash", response.Hash),
+		attribute.Int("ledger.protocol_version", int(response.ProtocolVersion)),
+		attribute.Int("ledger.tx_count", int(response.SuccessfulTxCount+response.FailedTxCount)),
+	)
+
+	logger.Logger.Info("Ledger header fetched successfully",
+		"sequence", sequence,
+		"hash", response.Hash,
+		"protocol_version", response.ProtocolVersion,
+		"close_time", response.CloseTime,
+	)
+
+	return response, nil
+}
+
+// handleLedgerError provides detailed error messages for ledger fetch failures
+func (c *Client) handleLedgerError(err error, sequence uint32) error {
+	// Check if it's a Horizon error
+	if hErr, ok := err.(*horizonclient.Error); ok {
+		switch hErr.Problem.Status {
+		case 404:
+			logger.Logger.Warn("Ledger not found", "sequence", sequence, "status", 404)
+			return &LedgerNotFoundError{
+				Sequence: sequence,
+				Message:  fmt.Sprintf("ledger %d not found (may be archived or not yet created)", sequence),
+			}
+		case 410:
+			logger.Logger.Warn("Ledger archived", "sequence", sequence, "status", 410)
+			return &LedgerArchivedError{
+				Sequence: sequence,
+				Message:  fmt.Sprintf("ledger %d has been archived and is no longer available", sequence),
+			}
+		case 429:
+			logger.Logger.Warn("Rate limit exceeded", "sequence", sequence, "status", 429)
+			return &RateLimitError{
+				Message: "rate limit exceeded, please try again later",
+			}
+		default:
+			logger.Logger.Error("Horizon error", "sequence", sequence, "status", hErr.Problem.Status, "detail", hErr.Problem.Detail)
+			return fmt.Errorf("horizon error (status %d): %v", hErr.Problem.Status, hErr.Problem.Detail)
+		}
+	}
+
+	// Generic error
+	logger.Logger.Error("Failed to fetch ledger", "sequence", sequence, "error", err)
+	return fmt.Errorf("failed to fetch ledger %d: %w", sequence, err)
+}
+
+// LedgerNotFoundError indicates that the requested ledger doesn't exist.
+// This can happen if the ledger sequence is in the future or invalid.
+type LedgerNotFoundError struct {
+	Sequence uint32
+	Message  string
+}
+
+func (e *LedgerNotFoundError) Error() string {
+	return e.Message
+}
+
+// LedgerArchivedError indicates that the requested ledger has been archived
+// and is no longer available through the Horizon API.
+type LedgerArchivedError struct {
+	Sequence uint32
+	Message  string
+}
+
+func (e *LedgerArchivedError) Error() string {
+	return e.Message
+}
+
+// RateLimitError indicates that too many requests have been made
+// and the client should back off.
+type RateLimitError struct {
+	Message string
+}
+
+func (e *RateLimitError) Error() string {
+	return e.Message
+}
+
+// IsLedgerNotFound checks if error is a "ledger not found" error
+func IsLedgerNotFound(err error) bool {
+	_, ok := err.(*LedgerNotFoundError)
+	return ok
+}
+
+// IsLedgerArchived checks if error is a "ledger archived" error
+func IsLedgerArchived(err error) bool {
+	_, ok := err.(*LedgerArchivedError)
+	return ok
+}
+
+// IsRateLimitError checks if error is a rate limit error
+func IsRateLimitError(err error) bool {
+	_, ok := err.(*RateLimitError)
+	return ok
 }
 
 // GetLedgerEntries fetches the current state of ledger entries from Soroban RPC
