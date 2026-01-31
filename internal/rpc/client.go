@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -96,93 +95,48 @@ var (
 type Client struct {
 	HorizonURL   string
 	Horizon      horizonclient.ClientInterface
-	HorizonURL   string
 	AltURLs      []string
 	currIndex    int
 	mu           sync.RWMutex
 	Network      Network
 	SorobanURL   string
-	AltURLs      []string
-	mu           sync.RWMutex
-	currIndex    int
-	token        string // stored for reference, not logged
+	token        string
 	Config       NetworkConfig
 	CacheEnabled bool
 }
 
-// NewClient creates a new RPC client with the specified network
-// If network is empty, defaults to Mainnet
-// Token can be provided via the token parameter or ERST_RPC_TOKEN environment variable
-func NewClient(net Network, token string) *Client {
-	if net == "" {
-		net = Mainnet
+// NewClientDefault creates a new RPC client with sensible defaults
+// Uses the Mainnet by default and accepts optional environment token
+// Deprecated: Use NewClient with functional options instead
+func NewClientDefault(net Network, token string) *Client {
+	client, err := NewClient(WithNetwork(net), WithToken(token))
+	if err != nil {
+		logger.Logger.Error("Failed to create client with default options", "error", err)
+		return nil
 	}
-
-	// Check environment variable if token not provided
-	if token == "" {
-		token = os.Getenv("ERST_RPC_TOKEN")
-	}
-
-	var horizonURL string
-	switch net {
-	case Testnet:
-		horizonURL = TestnetHorizonURL
-	case Futurenet:
-		horizonURL = FuturenetHorizonURL
-	default:
-		horizonURL = MainnetHorizonURL
-	}
-
-	return NewClientWithURLs([]string{horizonURL}, net, token)
+	return client
 }
 
-// NewClientWithURL creates a new RPC client with a custom Horizon URL and optional token
-func NewClientWithURL(url string, net Network, token string) *Client {
-	return NewClientWithURLs([]string{url}, net, token)
+// NewClientWithURLOption creates a new RPC client with a custom Horizon URL
+// Deprecated: Use NewClient with WithHorizonURL instead
+func NewClientWithURLOption(url string, net Network, token string) *Client {
+	client, err := NewClient(WithNetwork(net), WithToken(token), WithHorizonURL(url))
+	if err != nil {
+		logger.Logger.Error("Failed to create client with URL", "error", err)
+		return nil
+	}
+	return client
 }
 
-// NewClientWithURLs creates a new RPC client with a list of Horizon URLs for failover and optional token
-func NewClientWithURLs(urls []string, net Network, token string) *Client {
-	if len(urls) == 0 {
-		return NewClient(net, token)
+// NewClientWithURLsOption creates a new RPC client with multiple Horizon URLs for failover
+// Deprecated: Use NewClient with WithAltURLs instead
+func NewClientWithURLsOption(urls []string, net Network, token string) *Client {
+	client, err := NewClient(WithNetwork(net), WithToken(token), WithAltURLs(urls))
+	if err != nil {
+		logger.Logger.Error("Failed to create client with URLs", "error", err)
+		return nil
 	}
-
-	// Re-use logic to get default Soroban URL if needed
-	var sorobanURL string
-	var config NetworkConfig
-	switch net {
-	case Testnet:
-		sorobanURL = TestnetSorobanURL
-		config = TestnetConfig
-	case Futurenet:
-		sorobanURL = FuturenetSorobanURL
-		config = FuturenetConfig
-	default:
-		sorobanURL = MainnetSorobanURL
-		config = MainnetConfig
-	}
-
-	httpClient := createHTTPClient(token)
-
-	return &Client{
-		HorizonURL: urls[0],
-		Horizon: &horizonclient.Client{
-			HorizonURL: urls[0],
-			HTTP:       httpClient,
-		},
-		Network:    net,
-		SorobanURL: sorobanURL,
-		AltURLs:    urls,
-		token:      token,
-		Config:     config,
-		HorizonURL:   urls[0],
-		AltURLs:      urls,
-		Network:      net,
-		SorobanURL:   sorobanURL,
-		token:        token,
-		Config:       config,
-		CacheEnabled: true,
-	}
+	return client
 }
 
 // rotateURL switches to the next available provider URL
@@ -209,10 +163,8 @@ func (c *Client) rotateURL() bool {
 func createHTTPClient(token string) *http.Client {
 	cfg := DefaultRetryConfig()
 
-	// Build transport chain: base -> auth -> retry
 	var baseTransport http.RoundTripper = http.DefaultTransport
 
-	// Add auth transport if token is provided
 	var transport http.RoundTripper = baseTransport
 	if token != "" {
 		transport = &authTransport{
@@ -221,42 +173,17 @@ func createHTTPClient(token string) *http.Client {
 		}
 	}
 
-	// Add retry transport
 	transport = NewRetryTransport(cfg, transport)
 
 	return &http.Client{
 		Transport: transport,
-			transport: http.DefaultTransport,
-		},
 	}
 }
 
 // NewCustomClient creates a new RPC client for a custom/private network
+// Deprecated: Use NewClient with WithNetworkConfig instead
 func NewCustomClient(config NetworkConfig) (*Client, error) {
-	if config.HorizonURL == "" {
-		return nil, fmt.Errorf("horizon URL is required for custom network")
-	}
-	if config.NetworkPassphrase == "" {
-		return nil, fmt.Errorf("network passphrase is required for custom network")
-	}
-
-	horizonClient := &horizonclient.Client{
-		HorizonURL: config.HorizonURL,
-		HTTP:       http.DefaultClient,
-	}
-
-	sorobanURL := config.SorobanRPCURL
-	if sorobanURL == "" {
-		sorobanURL = config.HorizonURL
-	}
-
-	return &Client{
-		Horizon:      horizonClient,
-		Network:      "custom",
-		SorobanURL:   sorobanURL,
-		Config:       config,
-		CacheEnabled: true,
-	}, nil
+	return NewClient(WithNetworkConfig(config))
 }
 
 // GetTransaction fetches the transaction details and full XDR data
@@ -556,7 +483,7 @@ func (c *Client) getLedgerEntriesAttempt(ctx context.Context, keysToFetch []stri
 		Jsonrpc: "2.0",
 		ID:      1,
 		Method:  "getLedgerEntries",
-		Params:  []interface{}{keys},
+		Params:  []interface{}{keysToFetch},
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -612,7 +539,7 @@ func (c *Client) getLedgerEntriesAttempt(ctx context.Context, keysToFetch []stri
 	}
 
 	logger.Logger.Info("Ledger entries fetched",
-// 		"total_requested", len(keys),
+		// 		"total_requested", len(keys),
 		"total_requested", len(keysToFetch),
 		"from_cache", len(keysToFetch)-fetchedCount,
 		"from_rpc", fetchedCount,
