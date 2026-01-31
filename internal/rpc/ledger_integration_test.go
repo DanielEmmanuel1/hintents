@@ -19,7 +19,9 @@ func TestGetLedgerHeader_Integration_Testnet(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	client := NewClient(Testnet, "")
+	client, err := NewClient(WithNetwork(Testnet))
+	require.NoError(t, err)
+	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -66,14 +68,16 @@ func TestGetLedgerHeader_Integration_FutureLedger(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	client := NewClient(Testnet, "")
+	client, err := NewClient(WithNetwork(Testnet))
+	require.NoError(t, err)
+	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Try to fetch a ledger far in the future
 	farFutureSequence := uint32(999999999)
 
-	_, err := client.GetLedgerHeader(ctx, farFutureSequence)
+	_, err = client.GetLedgerHeader(ctx, farFutureSequence)
 	require.Error(t, err)
 	assert.True(t, IsLedgerNotFound(err), "should be ledger not found error")
 
@@ -99,7 +103,9 @@ func TestGetLedgerHeader_Integration_MultipleNetworks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.network), func(t *testing.T) {
-			client := NewClient(tt.network, "")
+			client, err := NewClient(WithNetwork(tt.network))
+			require.NoError(t, err)
+			
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
@@ -127,7 +133,9 @@ func TestGetLedgerHeader_Integration_RecentLedger(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	client := NewClient(Testnet, "")
+	client, err := NewClient(WithNetwork(Testnet))
+	require.NoError(t, err)
+	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
