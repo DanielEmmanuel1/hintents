@@ -104,6 +104,28 @@ See [docs/proposal.md](docs/proposal.md) for the detailed proposal.
 2.  [ ] **Phase 2**: Build a basic "Replay Harness" that can execute a loaded WASM file.
 3.  [ ] **Phase 3**: Connect the harness to live mainnet data.
 
+## Contributors ✨
+
+Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/dotandev"><img src="https://avatars.githubusercontent.com/u/105521093?v=4" width="100px;" alt="dotdev."/><br /><sub><b>dotdev.</b></sub></a><br /><a href="#code-dotandev" title="Code">💻</a> <a href="#doc-dotandev" title="Documentation">📖</a> <a href="#ideas-dotandev" title="Ideas & Planning">🤔</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome!
+
 ---
 
 _Erst is an open-source initiative. Contributions, PRs, and Issues are welcome._
