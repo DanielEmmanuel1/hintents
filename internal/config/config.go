@@ -96,6 +96,11 @@ func Load() (*Config, error) {
 		for i := range cfg.RpcUrls {
 			cfg.RpcUrls[i] = strings.TrimSpace(cfg.RpcUrls[i])
 		}
+	} else if urlsEnv := os.Getenv("STELLAR_RPC_URLS"); urlsEnv != "" {
+		cfg.RpcUrls = strings.Split(urlsEnv, ",")
+		for i := range cfg.RpcUrls {
+			cfg.RpcUrls[i] = strings.TrimSpace(cfg.RpcUrls[i])
+		}
 	}
 
 	if err := cfg.loadFromFile(); err != nil {

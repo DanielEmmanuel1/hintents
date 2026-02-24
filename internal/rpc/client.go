@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dotandev/hintents/internal/logger"
 
@@ -103,6 +104,8 @@ type Client struct {
 	token        string // stored for reference, not logged
 	Config       NetworkConfig
 	CacheEnabled bool
+	failures     map[string]int
+	lastFailure  map[string]time.Time
 }
 
 // NodeFailure records a failure for a specific RPC URL
@@ -122,6 +125,48 @@ func (e *AllNodesFailedError) Error() string {
 		reasons = append(reasons, fmt.Sprintf("%s: %v", f.URL, f.Reason))
 	}
 	return fmt.Sprintf("all RPC endpoints failed: [%s]", strings.Join(reasons, ", "))
+}
+
+// isHealthy checks if an endpoint is currently healthy or if circuit is open
+func (c *Client) isHealthy(url string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.isHealthyLocked(url)
+}
+
+func (c *Client) isHealthyLocked(url string) bool {
+	fails := c.failures[url]
+	if fails < 5 {
+		return true
+	}
+	last := c.lastFailure[url]
+	// Circuit opens for 60 seconds
+	if time.Since(last) > 60*time.Second {
+		return true
+	}
+	return false
+}
+
+func (c *Client) markFailure(url string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failures == nil {
+		c.failures = make(map[string]int)
+	}
+	if c.lastFailure == nil {
+		c.lastFailure = make(map[string]time.Time)
+	}
+	c.failures[url]++
+	c.lastFailure[url] = time.Now()
+}
+
+func (c *Client) markSuccess(url string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failures == nil {
+		c.failures = make(map[string]int)
+	}
+	c.failures[url] = 0
 }
 
 // NewClientDefault creates a new RPC client with sensible defaults
@@ -158,7 +203,7 @@ func NewClientWithURLsOption(urls []string, net Network, token string) *Client {
 	return client
 }
 
-// rotateURL switches to the next available provider URL
+// rotateURL switches to the next available provider URL, skipping unhealthy ones if possible
 func (c *Client) rotateURL() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -167,7 +212,19 @@ func (c *Client) rotateURL() bool {
 		return false
 	}
 
-	c.currIndex = (c.currIndex + 1) % len(c.AltURLs)
+	// Try to find a healthy URL
+	for i := 0; i < len(c.AltURLs); i++ {
+		c.currIndex = (c.currIndex + 1) % len(c.AltURLs)
+		url := c.AltURLs[c.currIndex]
+		if c.isHealthyLocked(url) {
+			break
+		}
+		// If we've circled back to where we started, just take it
+		if i == len(c.AltURLs)-1 {
+			break
+		}
+	}
+
 	c.HorizonURL = c.AltURLs[c.currIndex]
 	c.Horizon = &horizonclient.Client{
 		HorizonURL: c.HorizonURL,
@@ -231,8 +288,11 @@ func (c *Client) GetTransaction(ctx context.Context, hash string) (*TransactionR
 	for attempt := 0; attempt < len(c.AltURLs); attempt++ {
 		resp, err := c.getTransactionAttempt(ctx, hash)
 		if err == nil {
+			c.markSuccess(c.HorizonURL)
 			return resp, nil
 		}
+
+		c.markFailure(c.HorizonURL)
 
 		failures = append(failures, NodeFailure{URL: c.HorizonURL, Reason: err})
 
@@ -345,8 +405,11 @@ func (c *Client) GetLedgerHeader(ctx context.Context, sequence uint32) (*LedgerH
 	for attempt := 0; attempt < len(c.AltURLs); attempt++ {
 		resp, err := c.getLedgerHeaderAttempt(ctx, sequence)
 		if err == nil {
+			c.markSuccess(c.HorizonURL)
 			return resp, nil
 		}
+
+		c.markFailure(c.HorizonURL)
 
 		failures = append(failures, NodeFailure{URL: c.HorizonURL, Reason: err})
 
@@ -518,6 +581,7 @@ func (c *Client) GetLedgerEntries(ctx context.Context, keys []string) (map[strin
 	for attempt := 0; attempt < len(c.AltURLs); attempt++ {
 		res, err := c.getLedgerEntriesAttempt(ctx, keysToFetch)
 		if err == nil {
+			c.markSuccess(c.HorizonURL)
 			// Merge with cached results
 			for k, v := range res {
 				entries[k] = v
@@ -525,6 +589,7 @@ func (c *Client) GetLedgerEntries(ctx context.Context, keys []string) (map[strin
 			return entries, nil
 		}
 
+		c.markFailure(c.HorizonURL)
 		failures = append(failures, NodeFailure{URL: c.HorizonURL, Reason: err})
 
 		if attempt < len(c.AltURLs)-1 {
@@ -685,8 +750,11 @@ func (c *Client) SimulateTransaction(ctx context.Context, envelopeXdr string) (*
 	for attempt := 0; attempt < len(c.AltURLs); attempt++ {
 		resp, err := c.simulateTransactionAttempt(ctx, envelopeXdr)
 		if err == nil {
+			c.markSuccess(c.HorizonURL)
 			return resp, nil
 		}
+
+		c.markFailure(c.HorizonURL)
 
 		failures = append(failures, NodeFailure{URL: c.HorizonURL, Reason: err})
 

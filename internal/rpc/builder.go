@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/clients/horizonclient"
 )
@@ -218,5 +219,7 @@ func (b *clientBuilder) build() (*Client, error) {
 		token:        b.token,
 		Config:       *b.config,
 		CacheEnabled: b.cacheEnabled,
+		failures:     make(map[string]int),
+		lastFailure:  make(map[string]time.Time),
 	}, nil
 }
