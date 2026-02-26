@@ -12,9 +12,26 @@ import (
 	"time"
 )
 
-// AuditLog represents the signed audit trail of a transaction simulation.
-// The TraceHash is computed from the canonical JSON serialization of the Payload
-// to ensure deterministic verification across different platforms.
+// AttestationCertificate represents a single X.509 certificate in the
+// hardware attestation chain. Certificates are ordered leaf-to-root.
+type AttestationCertificate struct {
+	PEM     string `json:"pem"`
+	Subject string `json:"subject"`
+	Issuer  string `json:"issuer"`
+	Serial  string `json:"serial"`
+}
+
+// HardwareAttestation contains the full attestation chain retrieved from
+// an HSM or hardware security token. When present in an AuditLog it
+// provides cryptographic proof that the signing key resides on a
+// hardware device and is non-exportable.
+type HardwareAttestation struct {
+	Certificates    []AttestationCertificate `json:"certificates"`
+	TokenInfo       string                  `json:"token_info"`
+	KeyNonExportable bool                   `json:"key_non_exportable"`
+	RetrievedAt     string                  `json:"retrieved_at"`
+}
+
 type AuditLog struct {
 	Version         string    `json:"version"`
 	Timestamp       time.Time `json:"timestamp"`
