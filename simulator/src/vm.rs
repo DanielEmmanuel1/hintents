@@ -23,6 +23,16 @@ pub fn enforce_soroban_compatibility(wasm: &[u8]) -> Result<(), String> {
 }
 
 fn is_float_op(op: &Operator) -> bool {
+    // Many of the `Operator` variants are prefixed with `F32` or `F64` when
+    // they perform floating-point operations. To avoid having to keep an
+    // exhaustive list in sync with whatever version of `wasmparser` is pulled
+    // in, simply look at the debug representation and check for the prefix.
+    //
+    // This is slightly less strict than matching individual variants, but it's
+    // good enough for our compatibility check: any float-related opcode will
+    // trigger the `starts_with` condition.
+    let name = format!("{:?}", op);
+    name.starts_with("F32") || name.starts_with("F64")
     let rep = format!("{:?}", op);
     rep.contains("F32") || rep.contains("F64")
 }

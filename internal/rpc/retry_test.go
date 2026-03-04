@@ -28,6 +28,9 @@ func TestDefaultRetryConfig(t *testing.T) {
 	if len(cfg.StatusCodesToRetry) == 0 {
 		t.Errorf("expected StatusCodesToRetry to have values")
 	}
+	if cfg.JitterFraction <= 0 {
+		t.Errorf("expected JitterFraction > 0, got %v", cfg.JitterFraction)
+	}
 }
 
 func TestRetryerSuccessFirstAttempt(t *testing.T) {
@@ -58,6 +61,30 @@ func TestRetryerSuccessFirstAttempt(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "success" {
 		t.Errorf("expected 'success', got '%s'", string(body))
+	}
+}
+
+// verify that nextBackoff actually applies jitter and produces varied
+// results when called repeatedly with the same base backoff.
+func TestNextBackoffJitter(t *testing.T) {
+	cfg := DefaultRetryConfig()
+	retrier := NewRetrier(cfg, nil)
+	base := cfg.InitialBackoff
+	seen := map[time.Duration]struct{}{}
+	for i := 0; i < 50; i++ {
+		b := retrier.nextBackoff(base)
+		// backoff should be roughly doubled plus/minus jitter
+		expected := base * 2
+		j := time.Duration(float64(expected) * cfg.JitterFraction)
+		min := expected - j
+		max := expected + j
+		if b < min || b > max {
+			t.Errorf("backoff %v out of jitter range [%v,%v]", b, min, max)
+		}
+		seen[b] = struct{}{}
+	}
+	if len(seen) <= 1 {
+		t.Errorf("expected jitter to vary backoff values, got %d unique", len(seen))
 	}
 }
 

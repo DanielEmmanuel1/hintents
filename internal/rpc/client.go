@@ -125,6 +125,10 @@ type Client struct {
 	failures        map[string]int
 	lastFailure     map[string]time.Time
 	middlewares     []Middleware
+  	// rotateCount tracks how many times rotateURL has successfully switched
+	// the active provider.  This is useful for metrics/observability when the
+	// client is operating in a multi‑URL failover configuration.
+	rotateCount int
 }
 
 // NodeFailure records a failure for a specific RPC URL
@@ -300,9 +304,18 @@ func (c *Client) rotateURL() bool {
 	c.SorobanURL = c.AltURLs[c.currIndex]
 
 	logger.Logger.Warn("RPC failover triggered", "new_url", c.HorizonURL)
+	// increment counter under the same lock so readers get a consistent view
+	c.rotateCount++
 	return true
 }
 
+// RotateCount returns the number of times the client has switched
+// to a different Horizon URL via rotateURL.  It is safe for concurrent
+// use.
+func (c *Client) RotateCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.rotateCount
 // attempts returns the number of retry attempts for failover loops (at least 1)
 func (c *Client) attempts() int {
 	if len(c.AltURLs) == 0 {

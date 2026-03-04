@@ -327,8 +327,10 @@ fn main() {
 
     let mut buffer = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut buffer) {
+        let err_msg = format!("Failed to read stdin: {e}");
         let res = SimulationResponse {
             status: "error".to_string(),
+//             error: Some(err_msg.clone()),
             error: Some(format!("Failed to read stdin: {e}")),
             error_code: None,
             lcov_report: None,
@@ -765,6 +767,7 @@ fn main() {
         Ok(Err(host_error)) => {
             // Host error during execution (e.g., contract trap, validation failure)
             let error_debug = format!("{:?}", host_error);
+          let error_msg = format!("{:?}", host_error);
             let decoded_msg = decode_error(&error_debug);
             let wasm_trace = WasmStackTrace::from_host_error(&error_debug);
             let trace_display = wasm_trace.display();
@@ -787,6 +790,76 @@ fn main() {
                 } else {
                     None
                 };
+
+            // Capture categorized events for analyzer
+            let categorized_events = match host.get_events() {
+                Ok(evs) => categorize_events(&evs),
+                Err(_) => vec![],
+            };
+
+            // Heuristic to ignore Rust stdlib panic wrappers and find the actual source point
+            let mut user_panic_point = None;
+            for event in &diagnostic_events {
+                let mut combined_text = event.data.clone();
+                for topic in &event.topics {
+                    combined_text.push_str(" ");
+                    combined_text.push_str(topic);
+                }
+
+                if combined_text.contains("panicked")
+                    || combined_text.contains("Error")
+                    || combined_text.contains("Trap")
+                {
+                    // Ignore known Rust stdlib wrappers commonly seen in Backtrace/Diagnostic events
+                    if combined_text.contains("core/src/panicking.rs")
+                        || combined_text.contains("core::panicking")
+                        || combined_text.contains("rust_begin_unwind")
+                        || combined_text.contains("std::rt::lang_start")
+                        || combined_text.contains("compiler_builtins")
+                        || combined_text.contains("rustc_std_workspace")
+                    {
+                        continue;
+                    }
+
+                    // Look for common user paths (like src/lib.rs, etc)
+                    if combined_text.contains(".rs") && !combined_text.contains("soroban-env-host")
+                    {
+                        user_panic_point = Some(combined_text.replace("\"", ""));
+                        // Break after finding the first valid panic point so we don't overwrite it with deeper arbitrary ones
+                        break;
+                    }
+                }
+            }
+
+            let details = if let Some(ref point) = user_panic_point {
+                format!(
+                    "Contract execution failed with host error: {:?}. Panic point: {}",
+                    host_error, point
+                )
+            } else {
+                format!(
+                    "Contract execution failed with host error: {:?}",
+                    host_error
+                )
+            };
+
+            let structured_error = StructuredError {
+                error_type: "HostError".to_string(),
+                message: format!("{:?}", host_error),
+                details: Some(details),
+            };
+
+            let error_msg = format!("{:?}", host_error);
+            let wasm_offset = extract_wasm_offset(&error_msg);
+
+            let source_location = if let (Some(offset), Some(mapper)) = (wasm_offset, &source_mapper) {
+                mapper.map_wasm_offset_to_source(offset)
+            } else {
+                None
+            };
+
+            let error_msg = format!("{:?}", host_error);
+            let wasm_offset = extract_wasm_offset(&error_msg);
 
             let response = SimulationResponse {
                 status: "error".to_string(),
