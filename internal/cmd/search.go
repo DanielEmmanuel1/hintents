@@ -5,131 +5,108 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
-	"github.com/dotandev/hintents/internal/db"
+	"github.com/dotandev/hintents/internal/config"
 	"github.com/dotandev/hintents/internal/errors"
-	"github.com/dotandev/hintents/internal/session"
+	"github.com/dotandev/hintents/internal/rpc"
 	"github.com/spf13/cobra"
 )
 
 var (
-	searchErrorFlag  string
-	searchEventFlag  string
-	searchTxFlag     string
-	searchLimitFlag  int
-	searchRecentFlag bool
+	searchLimitFlag      int
+	searchNetworkFlag    string
+	searchHorizonURLFlag string
 )
 
 var searchCmd = &cobra.Command{
-	Use:     "search",
+	Use:     "search <query>",
 	GroupID: "management",
-	Short:   "Search through saved debugging sessions",
-	Long: `Search through the history of debugging sessions to find past transactions,
-errors, or events. Supports regex patterns for flexible matching.
+	Short:   "Find contracts by symbol, creator, or contract ID",
+	Long: `Search contracts on Horizon/Soroban-backed networks using one query string.
 
-You can search by:
-  • Transaction hash (exact match)
-  • Error message patterns (regex)
-  • Event patterns (regex)
-  • Combine multiple filters
+The query is matched against:
+  - contract symbol (when available from Horizon metadata)
+  - creator/sponsor account address
+  - partial contract ID`,
+	Example: `  # Find token contracts by symbol
+  erst search usdc --network testnet
 
-Results are ordered by timestamp (most recent first) and limited by --limit flag.`,
-	Example: `  # Search for specific transaction
-  erst search --tx abc123...def789
+  # Find contracts by creator account
+  erst search GABCDEF... --network testnet
 
-  # Find sessions with specific error patterns
-  erst search --error "insufficient balance"
-
-  # Search for contract events
-  erst search --event "transfer|mint"
-
-  # Combine filters and limit results
-  erst search --error "panic" --limit 5`,
-	Args: cobra.NoArgs,
+  # Find contracts by partial contract ID
+  erst search CAXYZ --network testnet`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if searchRecentFlag {
-			uiStore, err := session.NewUIStateStore()
-			if err != nil {
-				return fmt.Errorf("failed to open viewer state: %w", err)
-			}
-			defer uiStore.Close()
-			queries, err := uiStore.RecentSearches(cmd.Context(), 10)
-			if err != nil {
-				return fmt.Errorf("failed to load recent searches: %w", err)
-			}
-			if len(queries) == 0 {
-				fmt.Println("No recent searches.")
-				return nil
-			}
-			fmt.Printf("Recent searches (%d):\n", len(queries))
-			for i, q := range queries {
-				fmt.Printf("  %d. %s\n", i+1, q)
-			}
-			return nil
+		network := strings.TrimSpace(searchNetworkFlag)
+		switch rpc.Network(network) {
+		case rpc.Testnet, rpc.Mainnet, rpc.Futurenet:
+		default:
+			return errors.WrapInvalidNetwork(network)
 		}
 
-		store, err := db.InitDB()
+		cfg, err := config.Load()
 		if err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("failed to initialize session database: %v", err))
+			return fmt.Errorf("load config: %w", err)
 		}
 
-		params := db.SearchParams{
-			TxHash:     searchTxFlag,
-			ErrorRegex: searchErrorFlag,
-			EventRegex: searchEventFlag,
+		horizonURL := strings.TrimSpace(searchHorizonURLFlag)
+		if horizonURL == "" {
+			switch rpc.Network(network) {
+			case rpc.Mainnet:
+				horizonURL = rpc.MainnetHorizonURL
+			case rpc.Futurenet:
+				horizonURL = rpc.FuturenetHorizonURL
+			default:
+				horizonURL = rpc.TestnetHorizonURL
+			}
+		}
+
+		results, err := rpc.SearchContracts(cmd.Context(), rpc.SearchContractsOptions{
+			Query:      args[0],
+			HorizonURL: horizonURL,
 			Limit:      searchLimitFlag,
-		}
-
-		sessions, err := store.SearchSessions(params)
+			Timeout:    time.Duration(cfg.RequestTimeout) * time.Second,
+		})
 		if err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("search failed: %v", err))
+			return fmt.Errorf("search failed: %w", err)
 		}
 
-		if len(sessions) == 0 {
-			fmt.Println("No matching sessions found.")
+		if len(results) == 0 {
+			fmt.Println("No matching contracts found.")
 			return nil
 		}
 
-		fmt.Printf("Found %d matching sessions:\n", len(sessions))
-		for _, s := range sessions {
+		fmt.Printf("Found %d matching contracts on %s:\n", len(results), network)
+		for _, contract := range results {
 			fmt.Println("--------------------------------------------------")
-			fmt.Printf("ID: %d\n", s.ID)
-			fmt.Printf("Time: %s\n", s.Timestamp.Format("2006-01-02 15:04:05"))
-			fmt.Printf("Tx Hash: %s\n", s.TxHash)
-			fmt.Printf("Network: %s\n", s.Network)
-			fmt.Printf("Status: %s\n", s.Status)
-			if s.ErrorMsg != "" {
-				fmt.Printf("Error: %s\n", s.ErrorMsg)
+			fmt.Printf("Contract ID: %s\n", contract.ID)
+			if contract.Symbol != "" {
+				fmt.Printf("Symbol: %s\n", contract.Symbol)
 			}
-			if len(s.Events) > 0 {
-				fmt.Println("Events:")
-				for _, e := range s.Events {
-					fmt.Printf("  - %s\n", e)
-				}
+			if contract.Creator != "" {
+				fmt.Printf("Creator: %s\n", contract.Creator)
+			}
+			if contract.LastModifiedLedger > 0 {
+				fmt.Printf("Latest Activity Ledger: %d\n", contract.LastModifiedLedger)
+			}
+			if contract.LastModifiedTime != "" {
+				fmt.Printf("Latest Activity Time: %s\n", contract.LastModifiedTime)
 			}
 		}
 		fmt.Println("--------------------------------------------------")
-
-		// Persist non-empty search terms for future recall (best-effort).
-		if uiStore, err := session.NewUIStateStore(); err == nil {
-			defer uiStore.Close()
-			for _, q := range []string{searchErrorFlag, searchEventFlag, searchTxFlag} {
-				if q != "" {
-					_ = uiStore.AppendRecentSearch(cmd.Context(), q)
-				}
-			}
-		}
-
 		return nil
 	},
 }
 
 func init() {
-	searchCmd.Flags().StringVar(&searchErrorFlag, "error", "", "Regex pattern to match error messages")
-	searchCmd.Flags().StringVar(&searchEventFlag, "event", "", "Regex pattern to match events")
-	searchCmd.Flags().StringVar(&searchTxFlag, "tx", "", "Transaction hash to search for")
 	searchCmd.Flags().IntVar(&searchLimitFlag, "limit", 10, "Maximum number of results to return")
-	searchCmd.Flags().BoolVar(&searchRecentFlag, "recent", false, "Show recent search queries")
+	searchCmd.Flags().StringVarP(&searchNetworkFlag, "network", "n", string(rpc.Testnet), "Stellar network to search (testnet, mainnet, futurenet)")
+	searchCmd.Flags().StringVar(&searchHorizonURLFlag, "horizon-url", "", "Override Horizon URL (advanced)")
+	_ = searchCmd.Flags().MarkHidden("horizon-url")
+	_ = searchCmd.RegisterFlagCompletionFunc("network", completeNetworkFlag)
 
 	rootCmd.AddCommand(searchCmd)
 }
