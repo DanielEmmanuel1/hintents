@@ -95,7 +95,7 @@ var defaultConfig = &Config{
 
 func Load() (*Config, error) {
 	cfg := &Config{}
-	parsers := []Parser{envParser{}, fileParser{}}
+	parsers := []Parser{fileParser{}, envParser{}}
 	for _, parser := range parsers {
 		if err := parser.Parse(cfg); err != nil {
 			return nil, err
