@@ -431,6 +431,12 @@ func (c *Client) getTransactionAttempt(ctx context.Context, hash string) (txResp
 		logger.Logger.Error("Failed to fetch transaction", "hash", hash, "error", err, "url", c.HorizonURL)
 		// Record failed remote node response
 		metrics.RecordRemoteNodeResponse(c.HorizonURL, string(c.Network), false, duration)
+
+		// Check if it's a 404 (Transaction Not Found)
+		if hErr, ok := err.(*horizonclient.Error); ok && hErr.Problem.Status == 404 {
+			return nil, errors.WrapTransactionNotFound(err)
+		}
+
 		return nil, errors.WrapRPCConnectionFailed(err)
 	}
 
