@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 )
@@ -15,13 +16,10 @@ import (
 type Pane int
 
 const (
-	// PaneTrace is the left pane showing the execution trace tree.
 	PaneTrace Pane = iota
-	// PaneState is the right pane showing the state key-value table.
 	PaneState
 )
 
-// String returns a display label for the pane.
 func (p Pane) String() string {
 	if p == PaneTrace {
 		return "Trace"
@@ -41,7 +39,6 @@ type SplitLayout struct {
 	resizeCh chan struct{}
 }
 
-// NewSplitLayout creates a SplitLayout sized to the current terminal.
 func NewSplitLayout() *SplitLayout {
 	w, h := TermSize()
 	return &SplitLayout{
@@ -55,8 +52,6 @@ func NewSplitLayout() *SplitLayout {
 	}
 }
 
-// ToggleFocus switches keyboard focus to the other pane and returns the new
-// active pane. This is the action bound to the Tab key.
 func (l *SplitLayout) ToggleFocus() Pane {
 	if l.Focus == PaneTrace {
 		l.Focus = PaneState
@@ -66,13 +61,10 @@ func (l *SplitLayout) ToggleFocus() Pane {
 	return l.Focus
 }
 
-// SetFocus moves focus to the specified pane.
 func (l *SplitLayout) SetFocus(p Pane) {
 	l.Focus = p
 }
 
-// LeftWidth returns the number of columns allocated to the left (trace) pane,
-// excluding the centre divider character.
 func (l *SplitLayout) LeftWidth() int {
 	ratio := l.SplitRatio
 	if ratio <= 0 || ratio >= 1 {
@@ -85,12 +77,24 @@ func (l *SplitLayout) LeftWidth() int {
 	return w
 }
 
-// RightWidth returns the number of columns allocated to the right (state) pane.
 func (l *SplitLayout) RightWidth() int {
-	return l.Width - l.LeftWidth() - 1 // –1 for the divider
+	return l.Width - l.LeftWidth() - 1
 }
 
+// ListenResize starts a goroutine that updates Width/Height whenever the
+// terminal is resized and signals the caller via the returned channel.
+//
+// On Unix/Linux/macOS this installs a SIGWINCH handler.
+// On Windows SIGWINCH does not exist, so the channel is returned as-is and
+// the caller can poll TermSize() in the event loop instead.
 func (l *SplitLayout) ListenResize() <-chan struct{} {
+	if runtime.GOOS == "windows" {
+		// Windows has no SIGWINCH — return the channel unfired.
+		// The event loop should call TermSize() periodically and compare
+		// against l.Width/l.Height to detect resizes.
+		return l.resizeCh
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGWINCH)
 
@@ -121,11 +125,9 @@ func (l *SplitLayout) Render(leftLines, rightLines []string) {
 
 	sb := &strings.Builder{}
 
-	// ── Top border ────────────────────────────────────────────────────────────
 	sb.WriteString(l.borderRow(lw, rw))
 	sb.WriteByte('\n')
 
-	// ── Content rows ─────────────────────────────────────────────────────────
 	for row := 0; row < contentRows; row++ {
 		leftCell := cellAt(leftLines, row, lw)
 		rightCell := cellAt(rightLines, row, rw)
@@ -138,12 +140,10 @@ func (l *SplitLayout) Render(leftLines, rightLines []string) {
 		sb.WriteByte('\n')
 	}
 
-	// ── Bottom border ────────────────────────────────────────────────────────
 	bottom := "+" + strings.Repeat("-", lw) + "+" + strings.Repeat("-", rw) + "+"
 	sb.WriteString(bottom)
 	sb.WriteByte('\n')
 
-	// ── Status bar ───────────────────────────────────────────────────────────
 	status := fmt.Sprintf(" [focus: %s]  %s", l.Focus, KeyHelp())
 	if len(status) > l.Width {
 		status = status[:l.Width]
@@ -153,9 +153,6 @@ func (l *SplitLayout) Render(leftLines, rightLines []string) {
 	fmt.Print(sb.String())
 }
 
-// borderRow builds the top border string with centred pane titles.
-//
-//	+──── Trace ─────+──── State ─────+
 func (l *SplitLayout) borderRow(lw, rw int) string {
 	leftLabel := l.fmtTitle(l.LeftTitle, l.Focus == PaneTrace, lw)
 	rightLabel := l.fmtTitle(l.RightTitle, l.Focus == PaneState, rw)
@@ -165,7 +162,7 @@ func (l *SplitLayout) borderRow(lw, rw int) string {
 func (l *SplitLayout) fmtTitle(title string, focused bool, width int) string {
 	marker := ""
 	if focused {
-		marker = "*" // simple ASCII focus marker visible in all terminals
+		marker = "*"
 	}
 	label := fmt.Sprintf(" %s%s ", marker, title)
 	pad := width - len(label)
@@ -181,7 +178,6 @@ func (l *SplitLayout) divider() string {
 	return "│"
 }
 
-// panePrefix is a hook for future per-pane colouring (currently a no-op).
 func (l *SplitLayout) panePrefix(_ Pane) string {
 	return ""
 }
@@ -191,9 +187,7 @@ func cellAt(lines []string, row, width int) string {
 	if row < len(lines) {
 		text = lines[row]
 	}
-	// Strip any embedded newlines that would break the layout.
 	text = strings.ReplaceAll(text, "\n", " ")
-
 	if len(text) > width {
 		return text[:width]
 	}
