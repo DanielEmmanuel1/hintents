@@ -28,6 +28,7 @@ type SimulationRequest struct {
 	ResourceCalibration *ResourceCalibration   `json:"resource_calibration,omitempty"`
 
 	SandboxNativeTokenCapStroops *uint64 `json:"sandbox_native_token_cap_stroops,omitempty"`
+	ContractWasm                 *string `json:"contract_wasm,omitempty"`
 }
 
 type ResourceCalibration struct {
