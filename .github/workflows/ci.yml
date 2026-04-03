@@ -187,6 +187,105 @@ jobs:
   docs-spellcheck:
     name: Docs Spellcheck
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install misspell
+        run: |
+          curl -L https://raw.githubusercontent.com/client9/misspell/master/install-misspell.sh | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Run spellcheck
+        run: |
+          set -euo pipefail
+          IGNORE_WORDS=$(paste -sd, .github/spelling/allow.txt)
+          find . -name '*.md' -print0 | xargs -0 misspell -error -i "$IGNORE_WORDS"
+
+  # ============================================
+  # Rust Simulator - Lint, Build & Test
+  # ============================================
+  rust:
+    name: Rust CI (${{ matrix.rust-version }})
+    runs-on: ubuntu-latest
+    needs: license-headers
+    strategy:
+      matrix:
+        # Rust 1.87+ is required for ruzstd 0.8.x which uses the stabilized `unsigned_is_multiple_of` feature
+        rust-version: [stable, "1.87"]
+    defaults:
+      run:
+        working-directory: simulator
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust-version }}
+          components: rustfmt, clippy
+
+      - name: Reclaim runner temp space before Rust build
+        run: bash ../scripts/ci-clean-build-space.sh
+
+      - name: Cache Cargo dependencies and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: simulator -> target
+          # Cache key includes the toolchain so stable and 1.85.0 don't share
+          # a poisoned cache. Swatinem handles Cargo.lock hashing internally.
+          prefix-key: ${{ runner.os }}-rust-${{ matrix.rust-version }}
+          cache-targets: true
+
+      - name: Check formatting
+        if: matrix.rust-version == 'stable'
+        run: |
+          cargo fmt --check || {
+            echo "[FAIL] Rust files are not formatted. Run 'cargo fmt' to fix."
+            exit 1
+          }
+          echo " All Rust files are properly formatted"
+
+      - name: Run Clippy (strict mode)
+        if: matrix.rust-version == 'stable'
+        run: |
+          echo "Running Clippy with strict warnings..."
+          cargo clippy --all-targets --all-features -- \
+            -D warnings \
+            -D clippy::all \
+            -D unused-variables \
+            -D unused-imports \
+            -D unused-mut \
+            -D dead-code \
+            -D unused-assignments || {
+            echo "[FAIL] Clippy found issues that must be fixed"
+            exit 1
+          }
+          echo " Clippy checks passed"
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Prune Rust target before cache save
+        if: always()
+        run: bash ../scripts/prune-rust-target-cache.sh target
+
+      - name: Reclaim runner temp space after Rust build
+        if: always()
+        run: bash ../scripts/ci-clean-build-space.sh
+
+  # ============================================
+  # Docs - Spell Check
+  # ============================================
+  docs-spellcheck:
+    name: Docs Spellcheck
+    runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'push'
 
