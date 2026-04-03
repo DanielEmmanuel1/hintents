@@ -98,7 +98,8 @@ type Client struct {
 	// rotateCount tracks how many times rotateURL has successfully switched
 	// the active provider.  This is useful for metrics/observability when the
 	// client is operating in a multi‑URL failover configuration.
-	rotateCount int
+	rotateCount     int
+	healthCollector *HealthCollector
 }
 
 // NewClientDefault creates a new RPC client with sensible defaults
@@ -135,11 +136,109 @@ func NewClientWithURLsOption(urls []string, net Network, token string) *Client {
 	return client
 }
 
+// rotateURL switches to the next available provider URL, skipping unhealthy ones if possible
+func (c *Client) rotateURL() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.AltURLs) <= 1 {
+		return false
+	}
+
+	// Try to find a healthy URL
+	for i := 0; i < len(c.AltURLs); i++ {
+		c.currIndex = (c.currIndex + 1) % len(c.AltURLs)
+		url := c.AltURLs[c.currIndex]
+		if c.isHealthyLocked(url) {
+			break
+		}
+		// If we've circled back to where we started, just take it
+		if i == len(c.AltURLs)-1 {
+			break
+		}
+	}
+
+	c.HorizonURL = c.AltURLs[c.currIndex]
+	httpClient := c.httpClient
+	if httpClient == nil {
+		httpClient = createHTTPClient(c.token, defaultHTTPTimeout, c.middlewares...)
+	}
+	c.Horizon = &horizonclient.Client{
+		HorizonURL: c.HorizonURL,
+		HTTP:       httpClient,
+	}
+	// Keep SorobanURL in sync with the newly selected node so that
+	// Soroban JSON-RPC calls use the same failover endpoint as Horizon.
+	c.SorobanURL = c.AltURLs[c.currIndex]
+
+	logger.Logger.Warn("RPC failover triggered", "new_url", c.HorizonURL)
+	// increment counter under the same lock so readers get a consistent view
+	c.rotateCount++
+	return true
+}
+
+// RotateCount returns the number of times the client has switched
+// to a different Horizon URL via rotateURL.  It is safe for concurrent
+// use.
+func (c *Client) RotateCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.rotateCount
+}
+
+// attempts returns the number of retry attempts for failover loops (at least 1)
+func (c *Client) attempts() int {
+	if len(c.AltURLs) == 0 {
+		return 1
+	}
+	return len(c.AltURLs)
+}
+
+func (c *Client) getHTTPClient() *http.Client {
+	if c.httpClient != nil {
+		return c.httpClient
+	}
+	return http.DefaultClient
+}
+
 func (c *Client) startMethodTimer(ctx context.Context, method string, attributes map[string]string) MethodTimer {
 	if c == nil || c.methodTelemetry == nil {
 		return noopMethodTimer{}
 	}
 	return c.methodTelemetry.StartMethodTimer(ctx, method, attributes)
+}
+
+// GetHealthReport returns a snapshot of health telemetry for all known RPC nodes.
+func (c *Client) GetHealthReport() *HealthReport {
+	if c.healthCollector == nil {
+		return &HealthReport{
+			Nodes:       []NodeHealthStats{},
+			GeneratedAt: time.Now(),
+			Network:     c.GetNetworkName(),
+		}
+	}
+
+	stats := c.healthCollector.GetAllStats()
+
+	// Update circuit breaker state from the client's failure tracking
+	c.mu.RLock()
+	for i := range stats {
+		stats[i].CircuitOpen = !c.isHealthyLocked(stats[i].URL)
+	}
+	c.mu.RUnlock()
+
+	return &HealthReport{
+		Nodes:       stats,
+		GeneratedAt: time.Now(),
+		Network:     c.GetNetworkName(),
+	}
+}
+
+// recordTelemetry records request telemetry if the health collector is available.
+func (c *Client) recordTelemetry(url string, latency time.Duration, success bool) {
+	if c.healthCollector != nil {
+		c.healthCollector.RecordRequest(url, latency, success)
+	}
 }
 
 // NewCustomClient creates a new RPC client for a custom/private network
@@ -161,12 +260,13 @@ func NewCustomClient(config NetworkConfig) (*Client, error) {
 	}
 
 	return &Client{
-		Horizon:      horizonClient,
-		Network:      "custom",
-		SorobanURL:   sorobanURL,
-		Config:       config,
-		CacheEnabled: true,
-		httpClient:   httpClient,
+		Horizon:         horizonClient,
+		Network:         "custom",
+		SorobanURL:      sorobanURL,
+		Config:          config,
+		CacheEnabled:    true,
+		httpClient:      httpClient,
+		healthCollector: NewHealthCollector(),
 	}, nil
 }
 
@@ -229,6 +329,7 @@ func (c *Client) getTransactionAttempt(ctx context.Context, hash string) (txResp
 		span.RecordError(err)
 		// Record failed remote node response
 		metrics.RecordRemoteNodeResponse(c.HorizonURL, string(c.Network), false, time.Since(startTime))
+		c.recordTelemetry(c.HorizonURL, time.Since(startTime), false)
 		return nil, errors.WrapRPCConnectionFailed(err)
 	}
 
@@ -240,17 +341,22 @@ func (c *Client) getTransactionAttempt(ctx context.Context, hash string) (txResp
 		logger.Logger.Error("Failed to fetch transaction", "hash", hash, "error", err, "url", c.HorizonURL)
 		// Record failed remote node response
 		metrics.RecordRemoteNodeResponse(c.HorizonURL, string(c.Network), false, duration)
+		c.recordTelemetry(c.HorizonURL, duration, false)
 
 		// Check if it's a 404 (Transaction Not Found)
 		if hErr, ok := err.(*horizonclient.Error); ok && hErr.Problem.Status == 404 {
+			c.recordTelemetry(c.HorizonURL, duration, true)
 			return nil, errors.WrapTransactionNotFound(err)
 		}
+
+		c.recordTelemetry(c.HorizonURL, duration, false)
 
 		return nil, errors.WrapRPCConnectionFailed(err)
 	}
 
 	// Record successful remote node response
 	metrics.RecordRemoteNodeResponse(c.HorizonURL, string(c.Network), true, duration)
+	c.recordTelemetry(c.HorizonURL, duration, true)
 
 	span.SetAttributes(
 		attribute.Int("envelope.size_bytes", len(tx.EnvelopeXdr)),
