@@ -53,7 +53,6 @@ var (
 	compareNetworkFlag  string
 	verbose             bool
 	wasmPath            string
-	wasmOptimizeFlag    bool
 	args                []string
 	themeFlag           string
 	noCacheFlag         bool
@@ -73,8 +72,6 @@ var (
 	mockTimeFlag        int64
 	mockBaseFeeFlag     uint32
 	mockGasPriceFlag    uint64
-	asyncFlag           bool
-	asyncTimeoutFlag    int
 	exportSVGFlag       string
 	loadSnapshotsFlag   string
 	saveSnapshotsFlag   string

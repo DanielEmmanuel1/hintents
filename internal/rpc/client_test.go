@@ -329,7 +329,7 @@ func TestGetLedgerEntries_WithVerification(t *testing.T) {
 func TestGetLedgerEntries_ResponseTooLarge(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
-		w.Write([]byte("response too large"))
+		_, _ = w.Write([]byte("response too large"))
 	}))
 	defer server.Close()
 
@@ -349,7 +349,7 @@ func TestGetLedgerEntries_ResponseTooLarge(t *testing.T) {
 func TestSimulateTransaction_ResponseTooLarge(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
-		w.Write([]byte("response too large"))
+		_, _ = w.Write([]byte("response too large"))
 	}))
 	defer server.Close()
 

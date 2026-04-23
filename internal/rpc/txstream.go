@@ -429,7 +429,7 @@ type wsConn struct {
 func (c *wsConn) close() {
 	// Send a close frame before closing the underlying connection.
 	c.raw.SetWriteDeadline(time.Now().Add(1 * time.Second)) //nolint:errcheck
-	wsWriteFrame(c.raw, nil)                                //nolint:errcheck — best-effort
+	_ = wsWriteFrame(c.raw, nil) // best-effort
 	c.raw.Close()
 }
 
@@ -702,7 +702,7 @@ func wsGenKey() string {
 // client key per RFC 6455 §4.2.2 step 5.4.
 func wsAcceptKey(clientKey string) string {
 	h := sha1.New()
-	io.WriteString(h, clientKey+wsGUID) //nolint:errcheck — sha1.Write never fails
+	_, _ = io.WriteString(h, clientKey+wsGUID) // sha1.Write never fails
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 

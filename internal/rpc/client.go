@@ -147,7 +147,7 @@ func NewClientWithURLsOption(urls []string, net Network, token string) *Client {
 }
 
 // attempts returns the number of retry attempts for failover loops (at least 1)
-func (c *Client) attempts() int {
+func (c *Client) attempts() int { //nolint:unused
 	if len(c.AltURLs) == 0 {
 		return 1
 	}
