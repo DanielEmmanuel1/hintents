@@ -89,7 +89,7 @@ type CustomContractAuth struct {
 	ErrorMsg   string   `json:"error_msg,omitempty"`
 }
 
-type AuthTraceConfig struct {
+type Config struct {
 	TraceCustomContracts bool
 	CaptureSigDetails    bool
 	MaxEventDepth        int

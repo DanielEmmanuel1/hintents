@@ -11,11 +11,11 @@ import (
 // DepthAnalyzer analyzes and optimizes trace visibility for deeply nested calls
 type DepthAnalyzer struct {
 	maxDisplayDepth int
-	errorPaths      map[string]*TracePath
+	errorPaths      map[string]*PathMatch
 }
 
-// TracePath represents a path from root to a specific node
-type TracePath struct {
+// PathMatch represents a path from root to a specific node
+type PathMatch struct {
 	Nodes       []*TraceNode
 	TotalDepth  int
 	HasError    bool
@@ -30,7 +30,7 @@ func NewDepthAnalyzer(maxDisplayDepth int) *DepthAnalyzer {
 	}
 	return &DepthAnalyzer{
 		maxDisplayDepth: maxDisplayDepth,
-		errorPaths:      make(map[string]*TracePath),
+		errorPaths:      make(map[string]*PathMatch),
 	}
 }
 
@@ -60,7 +60,7 @@ func (da *DepthAnalyzer) analyzeNode(node *TraceNode, analysis *DepthAnalysis, p
 	// Track error nodes
 	if node.Type == "error" || node.Error != "" {
 		analysis.ErrorNodes = append(analysis.ErrorNodes, node)
-		da.errorPaths[node.ID] = &TracePath{
+		da.errorPaths[node.ID] = &PathMatch{
 			Nodes:      currentPath,
 			TotalDepth: node.Depth,
 			HasError:   true,
@@ -145,12 +145,12 @@ func (da *DepthAnalyzer) cloneNode(node *TraceNode) *TraceNode {
 }
 
 // GetErrorPath returns the path to an error node
-func (da *DepthAnalyzer) GetErrorPath(errorNodeID string) *TracePath {
+func (da *DepthAnalyzer) GetErrorPath(errorNodeID string) *PathMatch {
 	return da.errorPaths[errorNodeID]
 }
 
 // FormatErrorPath formats an error path for display
-func (da *DepthAnalyzer) FormatErrorPath(path *TracePath) string {
+func (da *DepthAnalyzer) FormatErrorPath(path *PathMatch) string {
 	if path == nil {
 		return ""
 	}

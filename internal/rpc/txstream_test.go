@@ -154,10 +154,10 @@ func TestWsFrameRoundTrip(t *testing.T) {
 		pr, pw := io.Pipe()
 		go func() {
 			if err := wsWriteFrame(pw, want); err != nil {
-				pw.CloseWithError(err)
+				_ = pw.CloseWithError(err)
 				return
 			}
-			pw.Close()
+			_ = pw.Close()
 		}()
 
 		// Unmask and read server-side (server reads client frames, which are masked).
@@ -177,8 +177,8 @@ func TestWsFrameRoundTrip(t *testing.T) {
 func TestWsWriteFrame_CloseFrame(t *testing.T) {
 	pr, pw := io.Pipe()
 	go func() {
-		wsWriteFrame(pw, nil) //nolint:errcheck
-		pw.Close()
+		_ = wsWriteFrame(pw, nil) //nolint:errcheck
+		_ = pw.Close()
 	}()
 
 	br := bufio.NewReader(pr)
@@ -212,7 +212,7 @@ func serveGetTransaction(statuses []string) http.HandlerFunc {
 		resp := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"result":{"status":%q,"ledger":100}}`, status)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, resp)
+		_, _ = fmt.Fprint(w, resp)
 	}
 }
 
@@ -315,7 +315,7 @@ func TestPollingStreamer_RPCError_Retries(t *testing.T) {
 		}
 		resp := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"result":{"status":%q,"ledger":101}}`, TxStatusSuccess)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, resp)
+		_, _ = fmt.Fprint(w, resp)
 	}))
 	defer srv.Close()
 
@@ -375,10 +375,10 @@ func newMockWSServer(t *testing.T, statuses []string) *httptest.Server {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Write the 101 upgrade response manually.
-		fmt.Fprintf(bufrw,
+		_, _ = fmt.Fprintf(bufrw,
 			"HTTP/1.1 101 Switching Protocols\r\n"+
 				"Upgrade: websocket\r\n"+
 				"Connection: Upgrade\r\n"+
@@ -392,12 +392,12 @@ func newMockWSServer(t *testing.T, statuses []string) *httptest.Server {
 
 		// Service JSON-RPC requests until the client closes.
 		for {
-			conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
 			msg, err := wsReadFrame(bufrw.Reader)
 			if err != nil {
 				return
 			}
-			conn.SetReadDeadline(time.Time{}) //nolint:errcheck
+			_ = conn.SetReadDeadline(time.Time{}) //nolint:errcheck
 
 			var req jsonrpcRequest
 			if err := json.Unmarshal(msg, &req); err != nil {
@@ -415,12 +415,12 @@ func newMockWSServer(t *testing.T, statuses []string) *httptest.Server {
 				req.ID, status,
 			)
 
-			conn.SetWriteDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+			_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
 			// Server sends unmasked frames — use a simple writer that skips masking.
 			if err := wsWriteFrameUnmasked(conn, []byte(resp)); err != nil {
 				return
 			}
-			conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
+			_ = conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
 
 			if status == TxStatusSuccess || status == TxStatusFailed {
 				return
@@ -609,9 +609,9 @@ func TestClientWatchTransaction_FallsBackWhenWebSocketStreamDrops(t *testing.T) 
 			if err != nil {
 				return
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 
-			fmt.Fprintf(bufrw,
+			_, _ = fmt.Fprintf(bufrw,
 				"HTTP/1.1 101 Switching Protocols\r\n"+
 					"Upgrade: websocket\r\n"+
 					"Connection: Upgrade\r\n"+
@@ -665,7 +665,7 @@ func TestClientWatchTransaction_FallsBackWhenWebSocketStreamDrops(t *testing.T) 
 		resp := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"result":{"status":%q,"ledger":456}}`, status)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, resp)
+		_, _ = fmt.Fprint(w, resp)
 	}))
 	defer srv.Close()
 
@@ -903,11 +903,11 @@ func TestWsReadMessage_ReassemblesFragments(t *testing.T) {
 	pr, pw := io.Pipe()
 	go func() {
 		if err := wsWriteFragmented(pw, want, 3); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		pw.Close()
-	}()
+				_ = pw.CloseWithError(err)
+				return
+			}
+			_ = pw.Close()
+		}()
 
 	br := bufio.NewReader(pr)
 	got, err := wsReadMessage(br)
@@ -923,8 +923,8 @@ func TestWsReadMessage_SingleFrame(t *testing.T) {
 	want := []byte(`{"status":"PENDING"}`)
 	pr, pw := io.Pipe()
 	go func() {
-		wsWriteFrameUnmasked(pw, want) //nolint:errcheck
-		pw.Close()
+		_ = wsWriteFrameUnmasked(pw, want) //nolint:errcheck
+		_ = pw.Close()
 	}()
 
 	br := bufio.NewReader(pr)
@@ -956,7 +956,7 @@ func serveGetTransactionFull() http.HandlerFunc {
 			status = TxStatusPending
 			resp := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"result":{"status":%q,"ledger":0}}`, status)
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, resp)
+			_, _ = fmt.Fprint(w, resp)
 			return
 		}
 		resp := `{"jsonrpc":"2.0","id":1,"result":{` +
@@ -970,7 +970,7 @@ func serveGetTransactionFull() http.HandlerFunc {
 			`"createdAt":1700000001` +
 			`}}`
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, resp)
+		_, _ = fmt.Fprint(w, resp)
 	}
 }
 
@@ -1052,9 +1052,9 @@ func newMockWSServerFull(t *testing.T) *httptest.Server {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
-		fmt.Fprintf(bufrw,
+		_, _ = fmt.Fprintf(bufrw,
 			"HTTP/1.1 101 Switching Protocols\r\n"+
 				"Upgrade: websocket\r\n"+
 				"Connection: Upgrade\r\n"+
@@ -1067,12 +1067,12 @@ func newMockWSServerFull(t *testing.T) *httptest.Server {
 		}
 
 		for {
-			conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
 			msg, err := wsReadFrame(bufrw.Reader)
 			if err != nil {
 				return
 			}
-			conn.SetReadDeadline(time.Time{}) //nolint:errcheck
+			_ = conn.SetReadDeadline(time.Time{}) //nolint:errcheck
 
 			var req jsonrpcRequest
 			if err := json.Unmarshal(msg, &req); err != nil {
@@ -1102,11 +1102,11 @@ func newMockWSServerFull(t *testing.T) *httptest.Server {
 				)
 			}
 
-			conn.SetWriteDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+			_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
 			if err := wsWriteFrameUnmasked(conn, []byte(resp)); err != nil {
 				return
 			}
-			conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
+			_ = conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
 
 			if callN >= 2 {
 				return

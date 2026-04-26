@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/dotandev/hintents/internal/logger"
-	"github.com/stellar/go/clients/horizonclient"
+	"github.com/stellar/go-stellar-sdk/clients/horizonclient"
 )
 
 // NodeFailure records a failure for a specific RPC URL

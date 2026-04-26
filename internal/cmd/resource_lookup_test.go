@@ -96,7 +96,7 @@ func TestResolvePartialID(t *testing.T) {
 }
 
 func TestResolveByTxHash(t *testing.T) {
-	sessions := []*session.SessionData{
+	sessions := []*session.Data{
 		{ID: "abc123-1700000000", TxHash: "aabbccdd11223344"},
 		{ID: "def456-1700001111", TxHash: "eeff001122334455"},
 	}

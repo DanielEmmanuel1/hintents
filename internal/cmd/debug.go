@@ -37,7 +37,7 @@ import (
 	"github.com/dotandev/hintents/internal/watch"
 
 	"github.com/spf13/cobra"
-	"github.com/stellar/go/xdr"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -763,7 +763,7 @@ Local WASM Replay Mode:
 			fmt.Printf("Warning: failed to serialize simulation results: %v\n", err)
 		}
 
-		sessionData := &session.SessionData{
+		sessionData := &session.Data{
 			ID:              session.GenerateID(txHash),
 			CreatedAt:       time.Now(),
 			LastAccessAt:    time.Now(),

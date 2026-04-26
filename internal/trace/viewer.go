@@ -1038,17 +1038,3 @@ func (v *InteractiveViewer) handleYank(args []string) {
 	fmt.Printf("%s Copied raw XDR to clipboard\n", visualizer.Symbol("sparkles"))
 }
 
-// Helper functions
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

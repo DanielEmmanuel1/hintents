@@ -238,7 +238,7 @@ func (td *TrapDetector) extractLocalVars(sp *dwarf.SubprogramInfo) []LocalVarInf
 //     displayed function name reflects where the fault occurred, not the caller.
 //
 // If no inlined frames are found the trap is left unchanged.
-func (td *TrapDetector) resolveInlinedChain(trap *TrapInfo, addr uint64, sp *dwarf.SubprogramInfo) {
+func (td *TrapDetector) resolveInlinedChain(trap *TrapInfo, addr uint64, _ *dwarf.SubprogramInfo) {
 	if td.dwarfParser == nil {
 		return
 	}
