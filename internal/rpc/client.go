@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dotandev/hintents/internal/errors"
 	"github.com/dotandev/hintents/internal/logger"
 	"github.com/dotandev/hintents/internal/metrics"
 
@@ -32,8 +33,25 @@ const (
 	Futurenet Network = "futurenet"
 )
 
-	"github.com/dotandev/hintents/internal/errors"
+// Horizon URLs for each network
+const (
+	TestnetHorizonURL   = "https://horizon-testnet.stellar.org/"
+	MainnetHorizonURL   = "https://horizon.stellar.org/"
+	FuturenetHorizonURL = "https://horizon-futurenet.stellar.org/"
 )
+
+// Soroban RPC URLs
+const (
+	TestnetSorobanURL   = "https://soroban-testnet.stellar.org"
+	MainnetSorobanURL   = "https://mainnet.stellar.validationcloud.io/v1/soroban-rpc-demo" // Public demo endpoint
+	FuturenetSorobanURL = "https://rpc-futurenet.stellar.org"
+)
+
+// authTransport is a custom HTTP RoundTripper that adds authentication headers
+type authTransport struct {
+	token     string
+	transport http.RoundTripper
+}
 
 // HTTPClient is an interface that matches horizonclient.HTTP.
 type HTTPClient interface {
@@ -170,10 +188,10 @@ func createHTTPClient(token string) *http.Client {
 	var baseTransport http.RoundTripper = http.DefaultTransport
 
 	var transport http.RoundTripper = baseTransport
-	
+
 	// Add user-agent transport
 	transport = &uaTransport{transport: transport}
-	
+
 	if token != "" {
 		transport = &authTransport{
 			token:     token,
@@ -212,28 +230,6 @@ func NewCustomClient(config NetworkConfig) (*Client, error) {
 		Config:       config,
 		CacheEnabled: true,
 	}, nil
-// Client handles interactions with the Stellar Network
-type Client struct {
-	Horizon         horizonclient.ClientInterface
-	HorizonURL      string
-	Network         Network
-	SorobanURL      string
-	AltURLs         []string
-	currIndex       int
-	mu              sync.RWMutex
-	httpClient      HTTPClient
-	token           string // stored for reference, not logged
-	Config          NetworkConfig
-	CacheEnabled    bool
-	methodTelemetry MethodTelemetry
-	failures        map[string]int
-	lastFailure     map[string]time.Time
-	middlewares     []Middleware
-	// rotateCount tracks how many times rotateURL has successfully switched
-	// the active provider.  This is useful for metrics/observability when the
-	// client is operating in a multi‑URL failover configuration.
-	rotateCount     int
-	healthCollector *HealthCollector
 }
 
 // attempts returns the number of retry attempts for failover loops (at least 1)
