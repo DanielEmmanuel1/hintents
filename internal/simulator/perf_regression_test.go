@@ -1,13 +1,3 @@
-// Copyright 2025 Erst Users
-// SPDX-License-Identifier: Apache-2.0
-
-package simulator
-
-import (
-	"fmt"
-	"os"
-	"regexp"
-	"strconv"
 // Copyright 2026 Erst Users
 // SPDX-License-Identifier: Apache-2.0
 
@@ -19,7 +9,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,18 +30,17 @@ func TestPerfRegression(t *testing.T) {
 	if len(matches) < 2 {
 		t.Fatalf("Could not parse baseline: %v", string(baselineData))
 	}
-	
+
 	baselineSecs, err := strconv.ParseFloat(matches[1], 64)
 	if err != nil {
 		t.Fatalf("Failed to parse baseline float: %v", err)
 	}
-	baselineMeanNs := float64(baselineSecs * 1e9)
+	baselineMeanNs := baselineSecs * 1e9
 
 	const iters = 3
 	var totalNs float64
 	for i := 0; i < iters; i++ {
 		start := time.Now()
-		// Performance critical path goes here
 		time.Sleep(1 * time.Millisecond)
 		totalNs += float64(time.Since(start).Nanoseconds())
 	}
@@ -58,9 +49,10 @@ func TestPerfRegression(t *testing.T) {
 	fmt.Printf("ns/op: %.2f\n", meanNs)
 	fmt.Printf("baseline (ns): %.2f\n", baselineMeanNs)
 
-	// Compare mean against baseline
-	if meanNs > baselineMeanNs*1.2 { // allowing arbitrary 20% jitter
+	if meanNs > baselineMeanNs*1.2 {
 		t.Errorf("Performance regression: mean %v ns > baseline %v ns", meanNs, baselineMeanNs)
+	}
+}
 // PerfBaseline represents the baseline metrics for performance regression tests
 type PerfBaseline struct {
 	Version    int                       `json:"version"`

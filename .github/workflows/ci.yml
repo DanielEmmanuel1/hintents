@@ -138,7 +138,6 @@ jobs:
 
       - name: Run tests
         run: go test -v -race ./...
-          args: --config=.golangci.yml --timeout=5m --max-issues-per-linter=0 --max-same-issues=0
 
       - name: Build
         run: go build -v ./...

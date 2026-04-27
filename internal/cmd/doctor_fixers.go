@@ -1,40 +1,18 @@
-// Copyright 2025 Erst Users
-// SPDX-License-Identifier: Apache-2.0
-
-package cmd
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"os/exec"
-	"time"
-)
-
-// FixSimulatorBinary wraps the cargo build execution in a timeout context
-func FixSimulatorBinary(ctx context.Context) error {
-	buildCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-
-	cmd := exec.CommandContext(buildCtx, "cargo", "build", "--release")
-	if err := cmd.Run(); err != nil {
-		if errors.Is(buildCtx.Err(), context.DeadlineExceeded) {
-			return errors.New("build timed out")
-		}
-		return fmt.Errorf("cargo build failed: %w", err)
-	}
 // Copyright 2026 Erst Users
 // SPDX-License-Identifier: Apache-2.0
 
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 // FixSimulatorBinary attempts to build the Soroban simulator
@@ -47,8 +25,12 @@ func FixSimulatorBinary(verbose bool) error {
 		return fmt.Errorf("simulator directory not found: %w", err)
 	}
 
+	// Create context with 5 min timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
 	// Run cargo build --release
-	cmd := exec.Command("cargo", "build", "--release")
+	cmd := exec.CommandContext(ctx, "cargo", "build", "--release")
 	cmd.Dir = "simulator"
 
 	if verbose {
@@ -59,6 +41,9 @@ func FixSimulatorBinary(verbose bool) error {
 	}
 
 	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("build timed out")
+		}
 		return fmt.Errorf("cargo build failed: %w", err)
 	}
 
